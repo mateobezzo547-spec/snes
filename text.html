@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SNES Local Arcade</title>
+    <style>
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; margin: 0; padding: 0; }
+        body { background-color: #151515; font-family: sans-serif; color: white; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        #top-nav { background: #252525; padding: 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #353535; }
+        .open-btn { background: #4a4a4a; color: white; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 14px; }
+        #viewport { flex: 1; display: flex; align-items: center; justify-content: center; background: #000; position: relative; }
+        canvas { max-width: 100%; max-height: 100%; aspect-ratio: 4 / 3; image-rendering: pixelated; }
+        #gamepad { background: #1f1f1f; height: 42vh; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 10px; border-top: 2px solid #2a2a2a; position: relative; }
+        .cross-layout { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 130px; height: 130px; margin: auto; }
+        .pad-btn { background: #3a3a3a; border-radius: 6px; border: 1px solid #4a4a4a; }
+        .pad-btn:active, .act-btn:active, .opt-btn:active { background: #666 !important; }
+        #u-btn { grid-column: 2; grid-row: 1; border-radius: 6px 6px 0 0; }
+        #l-btn { grid-column: 1; grid-row: 2; border-radius: 6px 0 0 6px; }
+        #r-btn { grid-column: 3; grid-row: 2; border-radius: 0 6px 6px 0; }
+        #d-btn { grid-column: 2; grid-row: 3; border-radius: 0 0 6px 6px; }
+        .sys-layout { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 15px; }
+        .opt-btn { background: #444; width: 65px; height: 22px; border-radius: 10px; font-size: 9px; text-align: center; line-height: 22px; font-weight: bold; color: #bbb; }
+        .diamond-layout { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; width: 130px; height: 130px; margin: auto; gap: 8px; transform: rotate(-15deg); }
+        .act-btn { border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 18px; color: white; box-shadow: 0 3px 0 rgba(0,0,0,0.3); }
+        #x-btn { background: #2b57ff; grid-column: 1; grid-row: 1; }  
+        #a-btn { background: #e51c23; grid-column: 2; grid-row: 1; }  
+        #y-btn { background: #ffeb3b; color: #222; grid-column: 1; grid-row: 2; }  
+        #b-btn { background: #4caf50; grid-column: 2; grid-row: 2; }  
+        .shoulder { position: absolute; top: -35px; width: 65px; height: 30px; background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 4px; text-align: center; line-height: 30px; font-size: 12px; font-weight: bold; }
+        #l-shld { left: 15px; } #r-shld { right: 15px; }
+        #rom-file { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="top-nav">
+        <label for="rom-file" class="open-btn">Cargar ROM (.sfc)</label>
+        <input type="file" id="rom-file" accept=".sfc,.smc">
+        <div id="runtime-status">Consola Lista</div>
+    </div>
+
+    <div id="viewport">
+        <canvas id="display-buffer" width="256" height="224"></canvas>
+    </div>
+
+    <div id="gamepad">
+        <div id="l-shld" class="shoulder">L</div>
+        <div id="r-shld" class="shoulder">R</div>
+
+        <div class="cross-layout">
+            <div id="u-btn" class="pad-btn"></div>
+            <div id="l-btn" class="pad-btn"></div>
+            <div id="r-btn" class="pad-btn"></div>
+            <div id="d-btn" class="pad-btn"></div>
+        </div>
+
+        <div class="sys-layout">
+            <div id="select-trigger" class="opt-btn">SELECT</div>
+            <div id="start-trigger" class="opt-btn">START</div>
+        </div>
+
+        <div class="diamond-layout">
+            <div id="x-btn" class="act-btn">X</div>
+            <div id="a-btn" class="act-btn">A</div>
+            <div id="y-btn" class="act-btn">Y</div>
+            <div id="b-btn" class="act-btn">B</div>
+        </div>
+    </div>
+
+    <script>
+        const renderTarget = document.getElementById('display-buffer');
+        const gfxContext = renderTarget.getContext('2d');
+        let activeRuntime = false;
+        const inputMap = { u:0, d:0, l:0, r:0, sel:0, str:0, a:0, b:0, x:0, y:0, ltrig:0, rtrig:0 };
+
+        function attachInput(elementId, mapKey) {
+            const node = document.getElementById(elementId);
+            node.addEventListener('touchstart', (e) => { e.preventDefault(); inputMap[mapKey] = 1; });
+            node.addEventListener('touchend', (e) => { e.preventDefault(); inputMap[mapKey] = 0; });
+        }
+
+        attachInput('u-btn', 'u'); attachInput('d-btn', 'd'); attachInput('l-btn', 'l'); attachInput('r-btn', 'r');
+        attachInput('select-trigger', 'sel'); attachInput('start-trigger', 'str');
+        attachInput('a-btn', 'a'); attachInput('b-btn', 'b'); attachInput('x-btn', 'x'); attachInput('y-btn', 'y');
+        attachInput('l-shld', 'ltrig'); attachInput('r-shld', 'rtrig');
+
+        document.getElementById('rom-file').addEventListener('change', function(e) {
+            const targetedFile = e.target.files[0];
+            if (!targetedFile) return;
+
+            const fileProcessor = new FileReader();
+            fileProcessor.onload = function(event) {
+                document.getElementById('runtime-status').innerText = "Iniciando...";
+                activeRuntime = true;
+                runLoop();
+            };
+            fileProcessor.readAsArrayBuffer(targetedFile);
+        });
+
+        function runLoop() {
+            if (!activeRuntime) return;
+
+            const videoPlane = gfxContext.createImageData(256, 224);
+            const dataSpan = videoPlane.data.length;
+            
+            for (let index = 0; index < dataSpan; index += 4) {
+                videoPlane.data[index] = (index % 256) ^ 110;
+                videoPlane.data[index+1] = 60;
+                videoPlane.data[index+2] = 140;
+                videoPlane.data[index+3] = 255;
+            }
+            gfxContext.putImageData(videoPlane, 0, 0);
+            document.getElementById('runtime-status').innerText = "Ejecutando";
+            requestAnimationFrame(runLoop);
+        }
+    </script>
+</body>
+</html>
